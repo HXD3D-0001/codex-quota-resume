@@ -36,10 +36,20 @@ Windows 10/11、Python 3.11+、Node.js 18+、已登录并打开的 Codex Desktop
 ./scripts/install.ps1 -OwnerThreadId '<用于管理插件的真实 Codex 任务 ID>'
 ```
 
-安装登录启动快捷方式并启动隐藏生命周期监听器。Codex 已打开时立即启动监测；未打开时等待。管理任务 ID 用于桌面工具的调用上下文，仅保存在本机配置中。
+安装 UI 运行时、初始化状态并注册**登录计划任务**，随后立即启动隐藏监听器。Codex 已打开时马上开始监测；未打开时等待。管理任务 ID 用于桌面工具的调用上下文，仅保存在本机配置中。
 
-启动跟随监听器：`./scripts/start.ps1`；退出监听器与监测：`./scripts/stop.ps1`。
-移除登录启动：`./scripts/uninstall-startup.ps1`。移除后保留发送记录，避免重装重复续跑。
+若 PowerShell 脚本执行被策略禁止，`scripts/start.ps1` 会自己用 `-ExecutionPolicy Bypass` 重入一次，不改动机器策略。首次安装时 `register-task.ps1` 会自动移除 0.3 之前版本的登录快捷方式（备份为 `.removed`），避免两个监听器同时启动。
+
+启动跟随监听器：`./scripts/start.ps1`；退出监听器与监测：`./scripts/stop.ps1`；重新注册登录任务：`./scripts/register-task.ps1`。
+移除登录启动：`./scripts/uninstall.ps1`（旧名 `uninstall-startup.ps1` 仍可用）。移除后保留发送记录，避免重装重复续跑。
+
+**自愈与启动同步**：登录计划任务的动作是 `watchdog.py`，它每 2 秒检查监听器，进程被杀就在约 1 秒后重新拉起，因此外部结束（含 `taskkill /T` 连带）不再致命。监听器自身另有崩溃重启（指数退避，连续快速崩溃达上限后写日志并退出）。任务是第三层：看门狗本身被杀时由计划任务重启（约 1 分钟），这条路径在**任务动作返回失败**时生效。
+
+> 注意：计划任务自带的"失败重启"**不能**覆盖被外部强杀的进程 —— 任务会一直停在 `Ready`，不会触发。所以真正兜底的是看门狗，计划任务只是最后一道。
+
+监听器每 2 秒写心跳到 `lifecycle-status.json`；心跳中断超过 15 秒时悬浮条转为黄色并说明原因，而不是安静地不出现。`scripts/start.ps1` 与 `register-task.ps1` 都会清除上一次会话遗留的停止请求，避免新启动立刻退出。
+
+`python control.py doctor` 交叉校验启动同步是否成立（状态目录是否被 MSIX 重定向、UI 运行时是否可达、登录任务是否已注册、看门狗与监听器 PID、心跳新鲜度、额度报告、UI 崩溃日志），任一检查失败时退出码为 1。**Codex 未运行**时额度监测退出，轻量监听器与看门狗继续等待下次启动。
 
 如旧版本顶部条仍在运行，应先停止旧版，只保留新版本。
 
@@ -47,6 +57,7 @@ Windows 10/11、Python 3.11+、Node.js 18+、已登录并打开的 Codex Desktop
 
 ```powershell
 python control.py status
+python control.py doctor
 python control.py probe
 python control.py pause
 python control.py enable
@@ -55,7 +66,7 @@ python control.py mark --thread-id '<任务 ID>'
 python control.py unmark --thread-id '<任务 ID>'
 ```
 
-`probe` 仅查询，不发送。`mark` 表示用户明确授权该任务在额度可用时继续，可能立即开始。不能用“最近任务”代替明确 ID。
+`doctor` 只读检查启动同步，不改状态；`probe` 仅查询，不发送。`mark` 表示用户明确授权该任务在额度可用时继续，可能立即开始。不能用“最近任务”代替明确 ID。
 
 Codex 插件提供 `quota_resume_status` 与 `quota_resume_control` MCP 工具，以及 quota-resume 技能。安装插件后在新任务中使用，以加载新工具。守护程序独立于 MCP 运行，模型额度耗尽不会使计时器停止。
 
@@ -72,11 +83,12 @@ Codex 插件提供 `quota_resume_status` 与 `quota_resume_control` MCP 工具�
 ```powershell
 python -m unittest discover -v
 node --test test_bridge.mjs
-python -m compileall -q core.py monitor.py bridge.py control.py mcp_server.py overlay.py glass_overlay.py glass_native.py ui_model.py
+python -m compileall -q core.py monitor.py bridge.py control.py mcp_server.py overlay.py glass_overlay.py glass_native.py ui_model.py lifecycle.py watchdog.py doctor.py
+python control.py doctor
 python scripts/check_ui.py
 ```
 
-自动测试覆盖恢复前后、错误状态任务、周额度阻塞、陈旧数据、手动中断、人工标记、重启防重发、未知回执、任务变化与真实本地管道分帧。原生窗口测试检查尺寸、DPI、磨砂配置与点击穿透。已通过真实本地管道向管理任务发送并成功收到标注为自测的消息；下一次自然额度重置的全流程仍需实际观察。详见 [故障修复记录](docs/incident-2026-09-22.md)。
+自动测试覆盖恢复前后、错误状态任务、周额度阻塞、陈旧数据、手动中断、人工标记、重启防重发、未知回执、任务变化与真实本地管道分帧。监听器测试覆盖崩溃后自愈、请求退出不重启、连续快速崩溃不空转、日志轮转、心跳发布、残留停止请求不会杀死新启动；看门狗测试覆盖被杀后重启、崩溃退避、挂死替换与进程树来源；doctor 测试覆盖 MSIX 重定向、缺失 UI 运行时、死监听器与心跳过期、进程存活判定，以及 CLI 端到端。原生窗口测试检查尺寸、DPI、磨砂配置与点击穿透。已完成真实额度重置测试：2026-09-22 23:13:54（北京时间）重置，23:14:08 自动发送一次继续指令并恢复原任务，延迟约 14 秒。详见 [故障修复记录](docs/incident-2026-09-22.md)。
 
 ## GitHub 调研与参考
 

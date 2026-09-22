@@ -17,6 +17,12 @@ def execute(action, thread_id=None, owner=None):
             return {'initialized':True,'state_directory':str(store.directory)}
         if action=='status':
             return {**store.last_report(),'enabled':store.enabled(),'attempts':store.attempts()}
+        if action=='doctor':
+            # Prints its own report and exits non-zero when a check fails, so
+            # scripts can gate on "will this start with Codex". argv must be
+            # empty or argparse would re-parse this CLI's own arguments.
+            import doctor
+            return doctor.main(argv=[])
         if action in ('enable','pause'):
             store.set_enabled(action=='enable')
             (store.directory/'refresh.request').touch()
@@ -56,11 +62,15 @@ def execute(action, thread_id=None, owner=None):
 
 def main():
     parser=argparse.ArgumentParser(description='Codex quota recovery controls')
-    parser.add_argument('action',choices=['init','status','enable','pause','refresh','stop','probe','mark','unmark'])
+    parser.add_argument('action',choices=['init','status','doctor','enable','pause','refresh','stop','probe','mark','unmark'])
     parser.add_argument('--thread-id');parser.add_argument('--owner')
     args=parser.parse_args()
     if hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf-8')
-    try:print(json.dumps(execute(args.action,args.thread_id,args.owner),ensure_ascii=False,indent=2))
+    try:
+        result=execute(args.action,args.thread_id,args.owner)
+        # doctor prints its own report and signals failure through the exit code.
+        if isinstance(result,int):return result
+        print(json.dumps(result,ensure_ascii=False,indent=2))
     except Exception as error:
         print(json.dumps({'error':str(error)},ensure_ascii=False));return 1
     return 0

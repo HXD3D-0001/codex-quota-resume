@@ -29,11 +29,18 @@ class GlassBar(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedSize(WIDTH,HEIGHT)
         self.expanded=True;self.pinned=False;self.grace=time.monotonic()+5
-        self.report={};self.view=display_state({},time.time());self.last_read=0
+        self.report={};self.lifecycle=None;self.view=display_state({},time.time());self.last_read=0
         self.native={};self.tray=None
         if live:self.build_tray()
         self.timer=QTimer(self);self.timer.timeout.connect(self.tick)
         if live:self.timer.start(100)
+
+    def quit_requested(self):
+        # One file serves both readers: monitor.run_worker stops shortly after
+        # seeing it, and the listener treats it as "the user asked for this"
+        # instead of restarting the overlay as if it had crashed.
+        (state_directory()/'stop.request').touch()
+        self.app.quit()
 
     def build_tray(self):
         icon=QPixmap(32,32);icon.fill(Qt.transparent)
@@ -50,7 +57,7 @@ class GlassBar(QWidget):
         self.enabled_action.triggered.connect(lambda enabled:execute('enable' if enabled else 'pause'))
         self.pin_action=menu.addAction('常驻显示');self.pin_action.setCheckable(True)
         self.pin_action.triggered.connect(self.set_pinned)
-        menu.addSeparator();menu.addAction('退出',self.app.quit)
+        menu.addSeparator();menu.addAction('退出',self.quit_requested)
         menu.aboutToShow.connect(self.refresh_menu)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda reason:self.reveal() if reason==QSystemTrayIcon.Trigger else None)
@@ -59,6 +66,7 @@ class GlassBar(QWidget):
     def refresh_menu(self):
         self.menu_status.setText(self.view['status'])
         self.enabled_action.setChecked(bool(self.report.get('enabled')))
+        self.menu_status.setToolTip(self.view.get('startup_problem') or '')
     def set_pinned(self,value):self.pinned=value;self.tick()
     def reveal(self):self.grace=time.monotonic()+8;self.tick()
     def set_expanded(self,expanded):
@@ -75,7 +83,16 @@ class GlassBar(QWidget):
     def read_report(self):
         try:self.report=json.loads((state_directory()/'usage.json').read_text(encoding='utf-8'))
         except (OSError,ValueError):pass
-        self.view=display_state(self.report,time.time())
+        lifecycle=None
+        try:
+            status=json.loads((state_directory()/'lifecycle-status.json').read_text(encoding='utf-8'))
+            heartbeat=status.get('last_heartbeat') or status.get('checked_at')
+            if heartbeat is not None:
+                lifecycle={'heartbeat_age':max(0.0,time.time()-float(heartbeat)),
+                           'task_registered':status.get('task_registered')}
+        except (OSError,ValueError,TypeError):pass
+        self.lifecycle=lifecycle
+        self.view=display_state(self.report,time.time(),lifecycle)
         if self.tray:
             groups=self.view['groups']
             self.tray.setToolTip(f"Codex · 5h {groups[0]['balance']} · 7d {groups[1]['balance']}\n{self.view['status']}\n显示条支持鼠标穿透；右键托盘可操作")

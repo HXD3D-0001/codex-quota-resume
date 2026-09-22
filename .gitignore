@@ -2,9 +2,12 @@ __pycache__/
 *.pyc
 *.pid
 *.log
+*.log.1
 *.sqlite*
 *.db*
 *.local.json
+*.removed
+*.bak
 usage.json
 auth.json
 .env*
