@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "quota_resume": {
+      "command": "python",
+      "cwd": ".",
+      "args": ["mcp_server.py"]
+    }
+  }
+}

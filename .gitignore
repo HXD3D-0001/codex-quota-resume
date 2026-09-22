@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pid
+*.log
+*.sqlite*
+*.db*
+*.local.json
+usage.json
+auth.json
+.env*
+.runtime/
+.venv/
+dist/
