@@ -15,7 +15,7 @@ $shortcut.TargetPath = (Get-Command powershell.exe).Source
 $shortcut.Arguments = '-NoProfile -WindowStyle Hidden -File "' + (Join-Path $PSScriptRoot 'start.ps1') + '"'
 $shortcut.WorkingDirectory = $projectRoot
 $shortcut.WindowStyle = 7
-$shortcut.Description = 'Codex quota monitor and automatic task continuation'
+$shortcut.Description = 'Start quota monitoring with Codex Desktop and stop it when Codex exits'
 $shortcut.Save()
 & (Join-Path $PSScriptRoot 'start.ps1')
-Write-Output 'Installed startup shortcut and launched monitor.'
+Write-Output 'Installed startup shortcut and launched Codex lifecycle listener.'

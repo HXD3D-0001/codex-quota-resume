@@ -6,6 +6,8 @@
 
 ## 行为
 
+- 跟随 Codex Desktop 启停：通常在启动后 2 秒内启动悬浮条与额度监测，完全退出后关闭。最小化不视为退出。识别当前 Windows 会话中的 Codex 应用包，不把同名 CLI 或普通 ChatGPT 当成 Codex 桌面。
+- 登录启动的是轻量生命周期监听器；Codex 未运行时仅检查进程，不查询额度，不显示悬浮条或托盘。托盘手动退出后，本次 Codex 运行期间不再自动弹出，下次重新打开 Codex 时恢复。
 - 常规 30 秒查询，重置前 30 秒内每 5 秒以内查询，并调度到重置时刻。网络及服务端响应会增加实际延迟，不承诺零毫秒。
 - 五小时与周额度一起检查；任何窗口仍满、响应缺失、数据过期或断网，均不触发续跑。
 - 只自动恢复**安装以后最新一轮明确因 usage limit 失败**的本地 Codex 任务。
@@ -34,9 +36,9 @@ Windows 10/11、Python 3.11+、Node.js 18+、已登录并打开的 Codex Desktop
 ./scripts/install.ps1 -OwnerThreadId '<用于管理插件的真实 Codex 任务 ID>'
 ```
 
-安装登录启动快捷方式并启动隐藏后台程序。管理任务 ID 用于桌面工具的调用上下文，仅保存在本机配置中。
+安装登录启动快捷方式并启动隐藏生命周期监听器。Codex 已打开时立即启动监测；未打开时等待。管理任务 ID 用于桌面工具的调用上下文，仅保存在本机配置中。
 
-只启动：`./scripts/start.ps1`；退出：`./scripts/stop.ps1`。
+启动跟随监听器：`./scripts/start.ps1`；退出监听器与监测：`./scripts/stop.ps1`。
 移除登录启动：`./scripts/uninstall-startup.ps1`。移除后保留发送记录，避免重装重复续跑。
 
 如旧版本顶部条仍在运行，应先停止旧版，只保留新版本。
@@ -85,5 +87,6 @@ python scripts/check_ui.py
 
 - [CrossHair-Overlay](https://github.com/cappuccino8080/CrossHair-Overlay)：Windows 置顶窗口与点击穿透。
 - [py-window-styles](https://github.com/Akascape/py-window-styles)：Windows 窗口材质配置。
+- [thijse/Watchdog](https://github.com/thijse/Watchdog)：本地进程守护机制参考。本项目自行实现仅在 Codex 运行时启动子进程的轻量监听器。
 
 以上仅参考机制，没有复制第三方项目代码。UI 使用 Qt 和 Windows Acrylic 重写。

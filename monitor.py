@@ -141,24 +141,24 @@ class Monitor:
 
 
 class SingleInstance:
-    def __init__(self,directory):
-        self.directory=Path(directory);self.handle=None
+    def __init__(self,directory,name='monitor'):
+        self.directory=Path(directory);self.handle=None;self.name=name
     def __enter__(self):
         import msvcrt
         self.directory.mkdir(parents=True,exist_ok=True)
-        self.handle=(self.directory/'monitor.lock').open('a+b')
-        self.handle.seek(0);self.handle.write(b'0');self.handle.flush();self.handle.seek(0)
+        self.handle=(self.directory/(self.name+'.lock')).open('a+b')
+        self.handle.seek(0)
         try:msvcrt.locking(self.handle.fileno(),msvcrt.LK_NBLCK,1)
         except OSError:
             self.handle.close();self.handle=None
             raise RuntimeError('Quota monitor is already running') from None
-        (self.directory/'monitor.pid').write_text(str(os.getpid()),encoding='ascii')
+        (self.directory/(self.name+'.pid')).write_text(str(os.getpid()),encoding='ascii')
         return self
     def __exit__(self,*args):
         if self.handle:
             import msvcrt
             self.handle.seek(0);msvcrt.locking(self.handle.fileno(),msvcrt.LK_UNLCK,1);self.handle.close()
-            (self.directory/'monitor.pid').unlink(missing_ok=True)
+            (self.directory/(self.name+'.pid')).unlink(missing_ok=True)
 
 
 def run_worker(stop=None):
