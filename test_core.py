@@ -72,10 +72,20 @@ class TaskTests(unittest.TestCase):
         self.assertIsNone(candidate_key(task('completed',turn='turn-b'),'turn-a',100))
 
     def test_archived_and_busy_task_never_resume(self):
-        for state in ['active','systemError','notLoaded','waitingForInput']:
+        for state in ['active','waitingForInput']:
             detail=task();detail['thread']['status']={'type':state}
             self.assertIsNone(candidate_key(detail,'turn-a',100))
         detail=task();detail['thread']['archived']=True
         self.assertIsNone(candidate_key(detail,'turn-a',100))
+
+    def test_quota_failure_in_error_state_is_resumable(self):
+        for state in ['systemError','notLoaded']:
+            detail=task(error='You’ve hit your usage limit. Try again at 5:27 PM.')
+            detail['thread']['status']={'type':state}
+            self.assertEqual(candidate_key(detail,None,100),'thread-a:turn-a')
+
+    def test_waiting_flags_override_error_state(self):
+        detail=task();detail['thread']['status']={'type':'systemError','activeFlags':['waitingOnApproval']}
+        self.assertIsNone(candidate_key(detail,None,100))
 
 if __name__=='__main__': unittest.main()

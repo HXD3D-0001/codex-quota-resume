@@ -14,3 +14,5 @@ To mark an older or otherwise unfinished task, resolve its exact task ID using C
 Never classify all idle or unarchived tasks as unfinished. Do not modify model, thinking, approval, or sandbox settings. Do not consume reset credits or buy credits. An `uncertain` or `dispatching` attempt may already have been delivered: inspect the task and ask the user before any manual resend.
 
 The Windows helper must be running and Codex Desktop must be open. It polls independently of model quota. Unpinned monitoring covers the 30 most recent tasks; pin an older task to include it. If a desktop update breaks the local adapter, report the connection issue rather than attempting a duplicate CLI session.
+
+Refresh is automatic: normally every 30 seconds, at most every 5 seconds near or after reset, with a request scheduled for the reset time. The countdown redraws every second. Manual refresh is only an optional extra. The compact glass overlay passes all clicks through to the underlying app; use its system tray menu for controls. Quota failures can have an error or unloaded task status: inspect the latest failed turn rather than relying on an idle badge.

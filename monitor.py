@@ -81,7 +81,7 @@ class Monitor:
     def tick(self):
         now=self.clock()
         report={'checked_at':now,'enabled':self.store.enabled(),'connected':False,
-                'candidates':[],'attempts':self.store.attempts()}
+                'candidates':[],'inspections':[],'attempts':self.store.attempts()}
         try:
             data=normalize_usage(self.desktop.call('get_usage_limits'),self.clock())
             report.update(usage=data,connected=True)
@@ -94,12 +94,20 @@ class Monitor:
             report['scanned']=len(unique)
             activated=float(self.store.get('activated_at'))
             for thread,row in unique.items():
-                if row.get('status')!='idle':continue
-                detail=self.detail(thread)
+                try:
+                    detail=self.detail(thread)
+                except Exception as error:
+                    report['inspections'].append({'thread_id':thread,'reason':'read_failed','error':type(error).__name__})
+                    continue
                 marked=self.store.marked(thread)
                 if marked and detail.get('turns') and detail['turns'][0].get('id')!=marked:
                     self.store.unmark(thread);marked=None
                 key=candidate_key(detail,marked,activated)
+                turns=detail.get('turns') or []
+                report['inspections'].append({'thread_id':thread,'listed_state':row.get('status'),
+                    'thread_state':detail.get('thread',{}).get('status'),
+                    'latest_turn_state':turns[0].get('status') if turns else None,
+                    'eligible':bool(key),'already_attempted':bool(key and self.store.claimed(key))})
                 if not key or self.store.claimed(key):continue
                 report['candidates'].append({'thread_id':thread,'key':key})
                 if not self.store.enabled() or not quota_ready(data,self.clock()):continue

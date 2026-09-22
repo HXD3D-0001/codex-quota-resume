@@ -12,16 +12,18 @@
 - 旧任务、其他未完成任务必须明确标记。任务有新轮次时旧标记失效。完成、手动中断、正在执行、等待输入的任务不会被自动误判为限额失败。
 - 每个失败轮次只尝试发送一次；发送结果不确定时保留 `uncertain`，先检查原任务，不盲目重发。
 - 保留模型、思考强度及原有权限。不会购买额度、兑换重置次数、换账号或绕过限额。
-- 悬浮条显示余量、倒计时、连接和续跑状态。右键可刷新、暂停、启用、退出。
+- 360×38 逻辑像素的磨砂玻璃悬浮条，高 DPI 绘制，文字保持完全不透明。鼠标离开后收为顶部细条；在系统托盘可选择常驻显示。
+- 悬浮条完全点击穿透、不抢焦点；点击被遮住的内容直接落到下面的应用。刷新、暂停、启用、退出均放在系统托盘右键菜单。
+- 自动刷新不依赖点击或对话：后台持续查询；倒计时每秒更新。重置后服务端暂未更新时显示“更新中”并每 5 秒重查，不伪造 100% 余量。
 
 ## 要求与限制
 
-Windows 10/11、Python 3.11+（含 Tk）、Node.js 18+、已登录并打开的 Codex Desktop。
+Windows 10/11、Python 3.11+、Node.js 18+、已登录并打开的 Codex Desktop。安装脚本将 PySide6 Essentials 放到本地专用目录；不修改全局 Python 依赖。原生磨砂效果取决于 Windows 的透明效果设置。
 电脑休眠、关机或 Codex 关闭时无法续跑；恢复运行后重新检查。
 
 桌面桥接使用本机捆绑 `codex-app-tools` 所采用的管道协议，已在 Codex Desktop `0.155.0-alpha.9.2` 上验证读取。它不是稳定公开接口，桌面升级可能需要更新适配器；连接失败时明确显示过期，不改用 `resume --last`。
 
-监测当前桌面的 **30 个最近未置顶任务及全部置顶任务**。更多旧任务请先置顶。仅处理本机任务，不启动云端或远程主机任务。`idle` 本身不是“未完成”的证据。
+监测当前桌面的 **30 个最近未置顶任务及全部置顶任务**。更多旧任务请先置顶。仅处理本机任务，不启动云端或远程主机任务。`idle` 本身不是“未完成”的证据，限额失败的 `systemError` 和 `notLoaded` 状态也会检查。筛选结果写入本地 `inspections`，便于定位漏检。
 
 ## 安装与启动
 
@@ -67,10 +69,11 @@ Codex 插件提供 `quota_resume_status` 与 `quota_resume_control` MCP 工具�
 ```powershell
 python -m unittest discover -v
 node --test test_bridge.mjs
-python -m compileall -q core.py monitor.py bridge.py control.py mcp_server.py overlay.py
+python -m compileall -q core.py monitor.py bridge.py control.py mcp_server.py overlay.py glass_overlay.py glass_native.py ui_model.py
+python scripts/check_ui.py
 ```
 
-自动测试覆盖恢复前后、周额度阻塞、陈旧数据、手动中断、人工标记、重启防重发、未知回执、任务变化与真实本地管道分帧。真实账号验证使用只读额度/列表/轮次接口；开发时没有故意耗尽账号额度或自动启动旧任务，因此下一次真实耗尽后的端到端续跑仍需实际观察。
+自动测试覆盖恢复前后、错误状态任务、周额度阻塞、陈旧数据、手动中断、人工标记、重启防重发、未知回执、任务变化与真实本地管道分帧。原生窗口测试检查尺寸、DPI、磨砂配置与点击穿透。已通过真实本地管道向管理任务发送并成功收到标注为自测的消息；下一次自然额度重置的全流程仍需实际观察。详见 [故障修复记录](docs/incident-2026-09-22.md)。
 
 ## GitHub 调研与参考
 
@@ -79,4 +82,7 @@ python -m compileall -q core.py monitor.py bridge.py control.py mcp_server.py ov
 - [Justin1491/codex-dashboard](https://github.com/Justin1491/codex-dashboard)：自动续跑 CLI 会话，但其 `--last` 方式不足以精确选择多个桌面任务。
 - [OpenAI App Server 文档](https://learn.chatgpt.com/docs/app-server)：`account/rateLimits/read` 和任务接口。
 
-以上仅参考机制，没有复制第三方项目代码。顶部条 UI 延续用户原有本地工程。
+- [CrossHair-Overlay](https://github.com/cappuccino8080/CrossHair-Overlay)：Windows 置顶窗口与点击穿透。
+- [py-window-styles](https://github.com/Akascape/py-window-styles)：Windows 窗口材质配置。
+
+以上仅参考机制，没有复制第三方项目代码。UI 使用 Qt 和 Windows Acrylic 重写。

@@ -1,6 +1,6 @@
 {
   "name": "codex-quota-resume",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Live Codex quota display and automatic continuation after usage-limit recovery.",
   "repository": "https://github.com/HXD3D-0001/codex-quota-resume",
   "mcpServers": "./.mcp.json",
@@ -10,7 +10,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex 限额恢复助手",
-    "shortDescription": "实时额度显示，额度恢复后继续被限额中断的任务。",
+    "shortDescription": "自动刷新额度，磨砂悬浮条点击穿透，重置后恢复任务。",
     "longDescription": "Windows 后台监测器独立查询实时额度，确认恢复后向原 Codex 任务发送继续指令。支持暂停、明确标记待继续和防重复发送。",
     "developerName": "HXD3D-0001",
     "category": "Productivity",

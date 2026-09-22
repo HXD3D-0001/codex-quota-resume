@@ -10,10 +10,11 @@ class FakeDesktop:
     def __init__(self):
         self.usage=usage(); self.detail=task(); self.sent=[]; self.fail_send=False
         self.reads=0; self.change_on_recheck=False
+        self.list_status='idle'
     def call(self,tool,**args):
         if tool=='get_usage_limits': return self.usage
         if tool=='list_threads':
-            return {'threads':[{'id':'thread-a','kind':'codex','hostId':'local','status':'idle'}]}
+            return {'threads':[{'id':'thread-a','kind':'codex','hostId':'local','status':self.list_status}]}
         if tool=='read_thread':
             self.reads+=1
             if self.change_on_recheck and self.reads % 2 == 0: return task('completed',turn='turn-b')
@@ -83,5 +84,52 @@ class MonitorTests(unittest.TestCase):
             return result
         self.desktop.call=call
         self.monitor.tick();self.assertEqual(self.desktop.sent,[])
+
+    def test_error_badge_does_not_hide_a_quota_failed_task(self):
+        self.desktop.list_status='error'
+        self.desktop.detail['thread']['status']={'type':'systemError'}
+        self.monitor.tick()
+        self.desktop.usage=usage(0)
+        report=self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual(report['attempts'][0]['status'],'sent')
+
+    def test_one_unreadable_task_does_not_block_another(self):
+        self.desktop.usage=usage(0)
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='list_threads':
+                return {'threads':[{'id':key,'kind':'codex'} for key in ['broken','thread-a']]}
+            if tool=='read_thread' and args['threadId']=='broken':raise TimeoutError()
+            return original(tool,**args)
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual(report['inspections'][0]['reason'],'read_failed')
+
+    def test_background_worker_queries_at_reset_without_manual_refresh(self):
+        from unittest.mock import patch
+        from monitor import run_worker
+        clock=[197.0];queried=[]
+        class Timer:
+            def is_set(self):return clock[0]>=202
+            def wait(self,seconds):clock[0]+=seconds;return self.is_set()
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='get_usage_limits':
+                queried.append(clock[0])
+                return usage(0 if clock[0]>=200 else 100,reset=500 if clock[0]>=200 else 200)
+            return original(tool,**args)
+        self.desktop.call=call;self.desktop.close=lambda:None
+        self.desktop.list_status='error'
+        self.desktop.detail['thread']['status']={'type':'systemError'}
+        with patch('monitor.Store',lambda:Store(self.path)), \
+             patch('bridge.Desktop',lambda owner:self.desktop), \
+             patch('monitor.Monitor',lambda store,desktop:Monitor(store,desktop,clock=lambda:clock[0])), \
+             patch('monitor.time.monotonic',lambda:clock[0]):
+            run_worker(Timer())
+        self.assertEqual(queried,[197,200,200])
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertFalse((self.path/'refresh.request').exists())
 
 if __name__=='__main__': unittest.main()

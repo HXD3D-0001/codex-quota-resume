@@ -52,8 +52,10 @@ QUOTA_ERROR = re.compile(r"hit your usage limit|usage_limit_reached|usage limit 
 def candidate_key(detail, marked_turn, activated_at):
     thread = detail.get('thread', {})
     status = thread.get('status', {})
+    if isinstance(status, dict) and status.get('activeFlags'):
+        return None
     status = status.get('type') if isinstance(status, dict) else status
-    if status != 'idle' or thread.get('archived') or thread.get('kind', 'codex') != 'codex':
+    if status not in ('idle', 'systemError', 'notLoaded') or thread.get('archived') or thread.get('kind', 'codex') != 'codex':
         return None
     turns = detail.get('turns') or []  # Desktop read_thread contract: newest first.
     if not turns or not turns[0].get('id') or not thread.get('id'):

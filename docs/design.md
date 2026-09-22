@@ -6,7 +6,7 @@
 
 ## 实现约定
 
-- Windows、Python 3.11 标准库、Node.js 18+，复用旧版 Tk 悬浮条。
+- Windows、Python 3.11+、Node.js 18+；监测核心为标准库，UI 使用独立目录中的 PySide6 Essentials。360×38 逻辑像素，原生 Acrylic、高 DPI 清晰文字、完全鼠标穿透，控制放到系统托盘。
 - 本地守护程序独立于模型运行；通过已安装 Codex app tools 的本地管道协议读取实时额度、任务状态、发送后续消息。此桥接接口来自本机捆绑插件，属于版本相关接口；失效时停止续跑并显示连接错误，不退回盲目 CLI resume。
 - 常规 30 秒查询，距重置 30 秒内最多 5 秒间隔，准确调度到重置时间；重置后额度仍阻塞时每 5 秒重查。只有新鲜查询证实所有适用额度可用才续跑。周额度仍耗尽、数据缺失、断网均不放行。
 - 最新一轮必须明确失败且错误为 usage limit；不能仅凭 idle、未归档或文本提到额度判定。正在工作、等待输入、手动中断、已完成任务不自动恢复。
@@ -24,4 +24,4 @@
 - https://github.com/omi-last-stand/codex-usage-monitor/blob/main/docs/event-commands.md （真实重置后触发）
 - https://github.com/Justin1491/codex-dashboard （自动续跑，但 --last 不适用多任务精确恢复）
 
-不复制这些项目代码；只参考机制。原悬浮条来自用户现有本地工程。
+不复制这些项目代码；只参考机制。UI 重写与错误状态漏检修复见 incident-2026-09-22.md。
