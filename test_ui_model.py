@@ -14,4 +14,13 @@ class DisplayTests(unittest.TestCase):
     def test_missing_window_is_not_zero(self):
         self.assertEqual(display_state({},0)['groups'][0]['balance'],'—')
 
+    def test_green_describes_detection_not_all_task_history(self):
+        report={'connected':True,'enabled':True,'usage':{'observed_at':100}}
+        self.assertEqual(display_state(report,100)['status'],'监测正常 · 未发现待恢复任务')
+
+    def test_incomplete_scan_is_not_green(self):
+        report={'connected':True,'enabled':True,'usage':{'observed_at':100},
+                'inspections':[{'reason':'read_failed'}]}
+        self.assertEqual(display_state(report,100)['color'],'#fbbf24')
+
 if __name__=='__main__':unittest.main()

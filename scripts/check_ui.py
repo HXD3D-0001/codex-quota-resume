@@ -34,5 +34,15 @@ status['hit_test_reaches_underlying_window']=hit==int(under.winId())
 assert status['hit_test_skips_overlay'] and status['hit_test_reaches_underlying_window'],status
 output=Path(sys.argv[1]) if len(sys.argv)>1 else Path('.runtime/ui-preview.png')
 output.parent.mkdir(parents=True,exist_ok=True);bar.grab().save(str(output))
+# Collapsing must remove the native window, including its DWM backdrop.
+user.IsWindowVisible.argtypes=[W.HWND];user.IsWindowVisible.restype=W.BOOL
+for _ in range(3):
+    bar.set_expanded(False);app.processEvents()
+    assert not bar.isVisible() and not user.IsWindowVisible(int(bar.winId()))
+    assert bar.timer.isActive() is False  # This test uses live=False.
+    bar.set_expanded(True);app.processEvents()
+    assert bar.isVisible() and user.IsWindowVisible(int(bar.winId()))
+    assert bar.width()==360 and bar.height()==38
+status['hide_show_cycles']=3
 print(json.dumps(status))
 bar.close();under.close();app.processEvents()

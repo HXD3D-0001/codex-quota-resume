@@ -25,5 +25,9 @@ def display_state(report,now):
     elif uncertain:color,status='#fbbf24','发送结果待检查'
     elif not report.get('enabled'):color,status='#94a3b8','自动续跑已暂停'
     elif report.get('candidates'):color,status='#7dd3fc',f"{len(report['candidates'])} 个任务等待恢复"
-    else:color,status='#6ee7b7','自动续跑已启用'
+    elif any(i.get('reason')=='read_failed' for i in report.get('inspections',[])):
+        color,status='#fbbf24','部分任务读取失败 · 检查不完整'
+    elif report.get('scan_may_be_truncated'):
+        color,status='#fbbf24','仅检查最近任务与置顶任务 · 扫描范围受限'
+    else:color,status='#6ee7b7','监测正常 · 未发现待恢复任务'
     return {'groups':groups,'color':color,'status':status,'stale':stale}

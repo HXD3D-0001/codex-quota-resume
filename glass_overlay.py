@@ -61,6 +61,14 @@ class GlassBar(QWidget):
         self.enabled_action.setChecked(bool(self.report.get('enabled')))
     def set_pinned(self,value):self.pinned=value;self.tick()
     def reveal(self):self.grace=time.monotonic()+8;self.tick()
+    def set_expanded(self,expanded):
+        self.expanded=bool(expanded)
+        # A tiny acrylic window still has a compositor backdrop. Hide the HWND
+        # entirely; the independent timer keeps watching the top hover region.
+        if self.expanded:
+            if not self.isVisible():self.show()
+            self.update()
+        elif self.isVisible():self.hide()
     def showEvent(self,event):
         super().showEvent(event);self.native=configure_window(int(self.winId()))
 
@@ -80,11 +88,8 @@ class GlassBar(QWidget):
         center=screen.x()+screen.width()//2
         near=abs(cursor.x()-center)<=WIDTH//2 and screen.y()<=cursor.y()<=screen.y()+HEIGHT+14
         expanded=self.pinned or near or now<self.grace
-        width,height=(WIDTH,HEIGHT) if expanded else (64,4)
-        if expanded!=self.expanded:self.expanded=expanded;self.setFixedSize(width,height)
-        self.move(center-width//2,screen.y()+(7 if expanded else 1))
-        if not self.isVisible():self.show()
-        self.update()
+        self.move(center-WIDTH//2,screen.y()+7)
+        self.set_expanded(expanded)
 
     def text_font(self,pixels,weight=QFont.Normal):
         font=QFont('Segoe UI');font.setPixelSize(pixels);font.setWeight(weight)
@@ -93,8 +98,6 @@ class GlassBar(QWidget):
     def paintEvent(self,event):
         paint=QPainter(self);paint.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         rect=QRectF(self.rect()).adjusted(.5,.5,-.5,-.5)
-        if not self.expanded:
-            paint.setPen(Qt.NoPen);paint.setBrush(QColor(self.view['color']));paint.drawRoundedRect(rect,2,2);return
         # Background transparency does not reduce text opacity.
         gradient=QLinearGradient(0,0,0,HEIGHT);alpha=105 if self.native.get('acrylic') else 225
         gradient.setColorAt(0,QColor(32,41,56,alpha));gradient.setColorAt(1,QColor(16,22,33,alpha+20))
