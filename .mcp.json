@@ -3,7 +3,16 @@
     "quota_resume": {
       "command": "python",
       "cwd": ".",
-      "args": ["mcp_server.py"]
+      "args": [
+        "mcp_server.py"
+      ],
+      "env_vars": [
+        "LOCALAPPDATA",
+        "USERPROFILE",
+        "PATH",
+        "CODEX_APP_TOOLS_PIPE_PATH",
+        "CODEX_MCP_NODE_PATH"
+      ]
     }
   }
 }

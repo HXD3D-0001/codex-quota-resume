@@ -160,7 +160,12 @@ def run_worker(stop=None):
     try:
         while not stop.is_set():
             if (store.directory/'stop.request').exists():break
-            report=Monitor(store,desktop).tick()
+            try:
+                report=Monitor(store,desktop).tick()
+            except (OSError, sqlite3.Error):
+                # Temporary file locks must not silently kill monitoring.
+                stop.wait(5)
+                continue
             # Short local waits make explicit refresh/exit responsive without extra network calls.
             deadline=time.monotonic()+report['next_poll_seconds']
             while not stop.wait(min(1,max(0,deadline-time.monotonic()))):
