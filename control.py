@@ -12,9 +12,9 @@ def execute(action, thread_id=None, owner=None):
     store=Store()
     try:
         if action=='init':
-            if not owner:raise ValueError('A real Codex management task ID is required')
-            store.set('owner',owner)
-            return {'initialized':True,'state_directory':str(store.directory)}
+            # --owner is accepted for old installers; context is now automatic.
+            with store.db:store.db.execute('DELETE FROM settings WHERE key=?',('owner',))
+            return {'initialized':True,'state_directory':str(store.directory),'context_mode':'automatic'}
         if action=='status':
             return {**store.last_report(),'enabled':store.enabled(),'attempts':store.attempts()}
         if action=='doctor':
@@ -37,7 +37,7 @@ def execute(action, thread_id=None, owner=None):
             if not thread_id:raise ValueError('thread_id required')
             store.unmark(thread_id)
             return {'unmarked':thread_id}
-        desktop=Desktop(store.get('owner',''))
+        desktop=Desktop()
         try:
             if action=='probe':
                 return {'usage':normalize_usage(desktop.call('get_usage_limits'),time.time()),

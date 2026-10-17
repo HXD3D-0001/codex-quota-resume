@@ -7,8 +7,11 @@ import threading
 import time
 
 from core import normalize_usage, quota_ready, next_poll_delay, candidate_key
+from bridge import NoContextError
 
 CONTINUE_PROMPT = ('额度恢复助手：请继续本任务之前已经获得授权但尚未完成的工作，'
+                   '先阅读本任务中用户最新已发送的消息，尤其是限额中断后补充的要求；'
+                   '以这些最新要求为准，用户已修改或取消的旧要求不再执行。'
                    '先核对当前文件、进程及上一次执行结果，从中断处接着完成，避免重复已完成的操作。'
                    '保留本任务的原有目标、模型设置和权限边界。'
                    '如果已经完成、用户已要求停止，或必须等待用户提供信息/批准，请停止并说明。')
@@ -80,11 +83,20 @@ class Monitor:
 
     def tick(self):
         now=self.clock()
+        previous=self.store.last_report()
+        resumed=False
         report={'checked_at':now,'enabled':self.store.enabled(),'connected':False,
-                'candidates':[],'inspections':[],'attempts':self.store.attempts()}
+                'candidates':[],'inspections':[],'attempts':self.store.attempts(),
+                'context_mode':'automatic','waiting_for_context':False}
         try:
-            data=normalize_usage(self.desktop.call('get_usage_limits'),self.clock())
-            report.update(usage=data,connected=True)
+            try:
+                data=normalize_usage(self.desktop.call('get_usage_limits'),self.clock())
+                report.update(usage=data,connected=True)
+            except Exception as error:
+                # Discover failed tasks even while the quota endpoint is down.
+                # Keep old usage only for display, never for authorizing a send.
+                data=normalize_usage({},self.clock())
+                report.update(error=type(error).__name__,usage=previous.get('usage',{}))
             listing=self.desktop.call('list_threads',limit=30)
             rows=listing.get('threads',[])+listing.get('pinnedThreads',[])
             # The desktop supplies at most 30 recent unpinned tasks; pinned tasks are complete.
@@ -117,6 +129,11 @@ class Monitor:
                 fresh=normalize_usage(self.desktop.call('get_usage_limits'),self.clock())
                 report['usage']=fresh
                 if not quota_ready(fresh,self.clock()) or not self.store.enabled():continue
+                # A user may send supplementary requirements while the fresh
+                # quota request is in flight. Resume only the latest failure.
+                latest=self.detail(thread)
+                if (candidate_key(latest,self.store.marked(thread),activated)!=key
+                        or not self.store.enabled() or not quota_ready(fresh,self.clock())):continue
                 if not self.store.claim(key,thread,self.clock()):continue
                 try:
                     response=self.desktop.call('send_message_to_thread',threadId=thread,hostId='local',prompt=CONTINUE_PROMPT)
@@ -125,6 +142,7 @@ class Monitor:
                         raise RuntimeError('Desktop did not confirm dispatch')
                     self.store.finish(key,'sent',self.clock())
                     self.store.unmark(thread)
+                    resumed=True
                 except Exception:
                     self.store.finish(key,'uncertain',self.clock())
                 # One per tick avoids a burst of competing continuations.
@@ -132,10 +150,21 @@ class Monitor:
         except Exception as error:
             report['connected']=False
             report['error']=type(error).__name__  # No raw desktop messages/session data in logs.
+            report['waiting_for_context']=isinstance(error,NoContextError)
             report.setdefault('usage',self.store.last_report().get('usage',{}))
         report['enabled']=self.store.enabled()
         report['attempts']=self.store.attempts()
         report['next_poll_seconds']=next_poll_delay(report.get('usage',{}),self.clock()) if report['connected'] else 15
+        # Reset credits can restore quota long before the advertised reset.
+        # Retain this scheduling hint through consecutive read failures, but
+        # always require fresh task/usage checks before sending anything.
+        incomplete=not report['connected'] or any(item.get('reason')=='read_failed' for item in report['inspections'])
+        report['waiting_for_recovery']=bool(report['candidates']) or (incomplete and bool(previous.get('waiting_for_recovery',previous.get('candidates'))))
+        if report['enabled']:
+            if resumed:
+                report['next_poll_seconds']=min(1,report['next_poll_seconds'])
+            elif report['waiting_for_recovery']:
+                report['next_poll_seconds']=min(5,report['next_poll_seconds'])
         self.store.report(report)
         return report
 
@@ -164,7 +193,7 @@ class SingleInstance:
 def run_worker(stop=None):
     from bridge import Desktop
     stop=stop or threading.Event()
-    store=Store();desktop=Desktop(store.get('owner',''))
+    store=Store();desktop=Desktop()
     try:
         while not stop.is_set():
             if (store.directory/'stop.request').exists():break

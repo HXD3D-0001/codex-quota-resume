@@ -5,8 +5,10 @@ import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import readline from 'node:readline';
 
-test('desktop transport handles split frames, strips content and preserves exact resume target', async () => {
-  const pipe=process.platform==='win32' ? `\\\\.\\pipe\\quota-test-${randomUUID()}` : `/tmp/quota-test-${randomUUID()}.sock`;
+for (const discovery of ['explicit', 'app-tools', 'browser-use']) {
+test(`desktop transport handles split frames, privacy and exact target (${discovery})`, {skip: discovery!=='explicit' && process.platform!=='win32'}, async () => {
+  const name=discovery==='explicit' ? `quota-test-${randomUUID()}` : `codex-${discovery}-${randomUUID()}`;
+  const pipe=process.platform==='win32' ? `\\\\.\\pipe\\${name}` : `/tmp/${name}.sock`;
   const calls=[];
   const sockets=new Set();
   const server=net.createServer(socket=>{
@@ -19,6 +21,12 @@ test('desktop transport handles split frames, strips content and preserves exact
       let result;
       if(message.method==='tools/list')result={tools:['get_usage_limits','list_threads','read_thread','send_message_to_thread'].map(name=>({name,namespace:'codex_app'}))};
       else {
+        if (message.params.callerSource !== 'codex') {
+          const payload=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:message.id,error:{code:-32602,message:'Invalid app tool request'}}));
+          const prefix=Buffer.alloc(4);prefix.writeUInt32LE(payload.length);
+          socket.write(Buffer.concat([prefix,payload]));
+          return;
+        }
         calls.push(message.params);
         const value=message.params.tool==='read_thread' ? {thread:{id:'target'},turns:[{id:'t',status:'failed',items:[{text:'PRIVATE'}]}]} : {status:'sent'};
         result={success:true,contentItems:[{type:'inputText',text:JSON.stringify(value)}]};
@@ -30,11 +38,23 @@ test('desktop transport handles split frames, strips content and preserves exact
     });
   });
   await new Promise(resolve=>server.listen(pipe,resolve));
-  const child=spawn(process.execPath,['desktop_bridge.mjs'],{env:{...process.env,CODEX_APP_TOOLS_PIPE_PATH:pipe},stdio:['pipe','pipe','pipe']});
+  const env={...process.env};
+  const args=[];
+  if (discovery==='explicit') env.CODEX_APP_TOOLS_PIPE_PATH=pipe;
+  else {
+    delete env.CODEX_APP_TOOLS_PIPE_PATH;
+    // Isolate discovery from the user's actual desktop pipes. All calls must
+    // reach this test server, including the simulated continuation below.
+    const bootstrap=`import fs from 'node:fs'; const original=fs.readdirSync; fs.readdirSync=function(path,...args){return path===${JSON.stringify('\\\\.\\pipe\\')} ? ${JSON.stringify([name,'unrelated-pipe'])} : original.call(this,path,...args);};`;
+    args.push('--import',`data:text/javascript,${encodeURIComponent(bootstrap)}`);
+  }
+  args.push('desktop_bridge.mjs');
+  const child=spawn(process.execPath,args,{env,stdio:['pipe','pipe','pipe']});
   try {
     const replies=readline.createInterface({input:child.stdout})[Symbol.asyncIterator]();
     child.stdin.write(JSON.stringify({id:1,owner:'manager',tool:'read_thread',args:{threadId:'target'}})+'\n');
     const first=JSON.parse((await replies.next()).value);
+    assert.equal(first.error, undefined, 'current desktop must accept the app-tool request');
     assert.equal(first.result.turns[0].id,'t');
     assert.equal(JSON.stringify(first).includes('PRIVATE'),false);
     child.stdin.write(JSON.stringify({id:2,owner:'manager',tool:'send_message_to_thread',args:{threadId:'target',prompt:'continue'}})+'\n');
@@ -51,3 +71,4 @@ test('desktop transport handles split frames, strips content and preserves exact
     await new Promise(resolve=>server.close(resolve));
   }
 });
+}

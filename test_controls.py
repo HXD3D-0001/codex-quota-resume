@@ -9,6 +9,25 @@ import unittest
 
 
 class MCPTests(unittest.TestCase):
+    def test_init_removes_old_owner_without_resetting_safety_records(self):
+        from monitor import Store
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Store(tmp,now=100)
+            store.set('owner','deleted-manager');store.set_enabled(False)
+            store.claim('task:turn','task',120);store.finish('task:turn','uncertain',121)
+            store.close()
+            run=subprocess.run([sys.executable,'control.py','init'],text=True,encoding='utf-8',capture_output=True,
+                               env=dict(os.environ,CODEX_QUOTA_RESUME_STATE=tmp),timeout=10)
+            self.assertEqual(run.returncode,0,run.stderr)
+            self.assertEqual(json.loads(run.stdout)['context_mode'],'automatic')
+            store=Store(tmp)
+            try:
+                self.assertIsNone(store.get('owner'))
+                self.assertEqual(store.get('activated_at'),'100')
+                self.assertFalse(store.enabled())
+                self.assertEqual(store.attempts()[0]['status'],'uncertain')
+            finally:store.close()
+
     def test_real_stdio_server_status_and_pause(self):
         with tempfile.TemporaryDirectory() as tmp:
             requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{}},

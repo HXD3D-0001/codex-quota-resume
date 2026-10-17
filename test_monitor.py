@@ -46,6 +46,87 @@ class MonitorTests(unittest.TestCase):
         self.store.close();self.store=Store(self.path,now=130)
         Monitor(self.store,self.desktop,clock=lambda:130).tick()
         self.assertEqual(len(self.desktop.sent),1)
+
+    def test_reset_credit_recovery_is_polled_before_original_reset_time(self):
+        # A credit is redeemed independently of the previously advertised timer.
+        clock=[120.0];queried=[]
+        self.monitor.clock=lambda:clock[0]
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='get_usage_limits':
+                queried.append(clock[0])
+                return usage(100 if clock[0]<123 else 0,weekly=20,reset=900)
+            return original(tool,**args)
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertEqual(self.desktop.sent,[])
+        self.assertLessEqual(report['next_poll_seconds'],5)
+        clock[0]+=report['next_poll_seconds']
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual(self.desktop.sent[0]['threadId'],'thread-a')
+        self.assertLess(queried[-1],900)
+
+    def test_multiple_waiting_tasks_drain_without_another_normal_poll_interval(self):
+        self.desktop.usage=usage(0)
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='list_threads':
+                return {'threads':[{'id':key,'kind':'codex'} for key in ['thread-a','thread-b']]}
+            if tool=='read_thread':
+                detail=task();detail['thread']['id']=args['threadId']
+                return detail
+            return original(tool,**args)
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertLessEqual(report['next_poll_seconds'],1)
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual([sent['threadId'] for sent in self.desktop.sent],['thread-a','thread-b'])
+
+    def test_pending_failure_keeps_fast_polling_after_temporary_quota_read_error(self):
+        self.monitor.tick()
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='get_usage_limits':raise TimeoutError('temporary desktop error')
+            return original(tool,**args)
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertFalse(report['connected'])
+        self.assertEqual(self.desktop.sent,[])
+        self.assertLessEqual(report['next_poll_seconds'],5)
+        report=self.monitor.tick()
+        self.assertLessEqual(report['next_poll_seconds'],5)
+
+    def test_idle_or_paused_monitor_keeps_normal_polling(self):
+        self.desktop.detail=task('completed');self.desktop.usage=usage(0)
+        self.assertEqual(self.monitor.tick()['next_poll_seconds'],30)
+        self.desktop.detail=task();self.store.set_enabled(False)
+        self.assertEqual(self.monitor.tick()['next_poll_seconds'],30)
+
+    def test_initial_quota_read_error_still_detects_waiting_task_without_using_cached_quota(self):
+        from core import normalize_usage
+        self.store.report({'usage':normalize_usage(usage(0),119),'candidates':[]})
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='get_usage_limits':raise TimeoutError()
+            return original(tool,**args)
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertFalse(report['connected'])
+        self.assertEqual(len(report['candidates']),1)
+        self.assertEqual(report['candidates'][0]['thread_id'],'thread-a')
+        self.assertLessEqual(report['next_poll_seconds'],5)
+        self.assertEqual(self.desktop.sent,[])
+    def test_no_remaining_local_task_waits_without_sending(self):
+        from bridge import NoContextError
+        def call(tool,**args):raise NoContextError('No local task')
+        self.desktop.call=call
+        report=self.monitor.tick()
+        self.assertFalse(report['connected'])
+        self.assertTrue(report['waiting_for_context'])
+        self.assertEqual(report['context_mode'],'automatic')
+        self.assertEqual(self.desktop.sent,[])
     def test_ambiguous_send_never_auto_retries(self):
         self.desktop.usage=usage(0);self.desktop.fail_send=True
         self.monitor.tick();self.monitor.tick()
@@ -69,6 +150,29 @@ class MonitorTests(unittest.TestCase):
         self.desktop.usage=usage(0);self.monitor.tick()
         self.desktop.detail=task(turn='turn-b')
         self.monitor.tick();self.assertEqual(len(self.desktop.sent),2)
+    def test_supplementary_user_turn_replaces_old_waiting_turn(self):
+        self.monitor.tick()
+        self.desktop.detail=task(turn='supplementary-user-turn')
+        self.monitor.tick()
+        self.desktop.usage=usage(0)
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual([a['key'] for a in self.store.attempts()],['thread-a:supplementary-user-turn'])
+    def test_user_supplement_during_final_quota_read_defers_old_turn(self):
+        self.desktop.usage=usage(0)
+        original=self.desktop.call;usage_reads=[]
+        def call(tool,**args):
+            result=original(tool,**args)
+            if tool=='get_usage_limits':
+                usage_reads.append(1)
+                if len(usage_reads)==2:self.desktop.detail=task(turn='supplementary-user-turn')
+            return result
+        self.desktop.call=call
+        self.monitor.tick()
+        self.assertEqual(self.desktop.sent,[])
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual([a['key'] for a in self.store.attempts()],['thread-a:supplementary-user-turn'])
     def test_generic_throttle_is_not_usage_exhaustion(self):
         self.desktop.detail=task(error='429: too many requests');self.desktop.usage=usage(0)
         self.monitor.tick();self.assertEqual(self.desktop.sent,[])
@@ -84,6 +188,33 @@ class MonitorTests(unittest.TestCase):
             return result
         self.desktop.call=call
         self.monitor.tick();self.assertEqual(self.desktop.sent,[])
+    def test_pause_during_final_task_read_blocks_dispatch(self):
+        self.desktop.usage=usage(0)
+        original=self.desktop.call;reads=[]
+        def call(tool,**args):
+            result=original(tool,**args)
+            if tool=='read_thread':
+                reads.append(1)
+                if len(reads)==3:self.store.set_enabled(False)
+            return result
+        self.desktop.call=call
+        self.monitor.tick()
+        self.assertEqual(self.desktop.sent,[])
+        self.assertEqual(self.store.attempts(),[])
+    def test_final_task_read_cannot_outlive_fresh_quota(self):
+        self.desktop.usage=usage(0)
+        now=[120.0];self.monitor.clock=lambda:now[0]
+        original=self.desktop.call;reads=[]
+        def call(tool,**args):
+            result=original(tool,**args)
+            if tool=='read_thread':
+                reads.append(1)
+                if len(reads)==3:now[0]+=61
+            return result
+        self.desktop.call=call
+        self.monitor.tick()
+        self.assertEqual(self.desktop.sent,[])
+        self.assertEqual(self.store.attempts(),[])
 
     def test_error_badge_does_not_hide_a_quota_failed_task(self):
         self.desktop.list_status='error'
@@ -107,6 +238,30 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(self.desktop.sent),1)
         self.assertEqual(report['inspections'][0]['reason'],'read_failed')
 
+    def test_background_worker_recovers_after_reset_credit_without_manual_refresh(self):
+        from unittest.mock import patch
+        from monitor import run_worker
+        clock=[120.0];queried=[]
+        class Timer:
+            def is_set(self):return clock[0]>=127
+            def wait(self,seconds):clock[0]+=seconds;return self.is_set()
+        original=self.desktop.call
+        def call(tool,**args):
+            if tool=='get_usage_limits':
+                queried.append(clock[0])
+                return usage(0 if clock[0]>=123 else 100,reset=900)
+            return original(tool,**args)
+        self.desktop.call=call;self.desktop.close=lambda:None
+        with patch('monitor.Store',lambda:Store(self.path)), \
+             patch('bridge.Desktop',lambda:self.desktop), \
+             patch('monitor.Monitor',lambda store,desktop:Monitor(store,desktop,clock=lambda:clock[0])), \
+             patch('monitor.time.monotonic',lambda:clock[0]):
+            run_worker(Timer())
+        self.assertEqual(queried[:3],[120,125,125])
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual(self.desktop.sent[0]['threadId'],'thread-a')
+        self.assertFalse((self.path/'refresh.request').exists())
+
     def test_background_worker_queries_at_reset_without_manual_refresh(self):
         from unittest.mock import patch
         from monitor import run_worker
@@ -124,11 +279,11 @@ class MonitorTests(unittest.TestCase):
         self.desktop.list_status='error'
         self.desktop.detail['thread']['status']={'type':'systemError'}
         with patch('monitor.Store',lambda:Store(self.path)), \
-             patch('bridge.Desktop',lambda owner:self.desktop), \
+             patch('bridge.Desktop',lambda:self.desktop), \
              patch('monitor.Monitor',lambda store,desktop:Monitor(store,desktop,clock=lambda:clock[0])), \
              patch('monitor.time.monotonic',lambda:clock[0]):
             run_worker(Timer())
-        self.assertEqual(queried,[197,200,200])
+        self.assertEqual(queried[:3],[197,200,200])
         self.assertEqual(len(self.desktop.sent),1)
         self.assertFalse((self.path/'refresh.request').exists())
 

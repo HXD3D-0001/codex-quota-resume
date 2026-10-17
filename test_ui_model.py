@@ -13,6 +13,12 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(view['groups'][0]['countdown'],'更新中')
     def test_missing_window_is_not_zero(self):
         self.assertEqual(display_state({},0)['groups'][0]['balance'],'—')
+    def test_no_context_displays_waiting_without_claiming_fresh_quota(self):
+        view=display_state({'waiting_for_context':True,'connected':False},100)
+        self.assertTrue(view['stale'])
+        self.assertEqual(view['color'],'#fbbf24')
+        self.assertIn('等待可用本机任务',view['status'])
+        self.assertEqual(view['groups'][0]['balance'],'—')
 
     def test_green_describes_detection_not_all_task_history(self):
         report={'connected':True,'enabled':True,'usage':{'observed_at':100}}

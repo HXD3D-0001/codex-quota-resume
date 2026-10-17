@@ -1,11 +1,13 @@
 """Compact Qt glass overlay. All window input passes to the app underneath."""
 import json
+import ctypes as C
+from ctypes import wintypes as W
 from pathlib import Path
 import sys
 import threading
 import time
 from monitor import SingleInstance, state_directory, run_worker
-from glass_native import enable_dpi_awareness, configure_window, window_dpi
+from glass_native import enable_dpi_awareness, configure_window, window_dpi, window_styles, LAYERED, TRANSPARENT, NOACTIVATE
 from ui_model import display_state
 
 for directory in (state_directory()/'ui-runtime',Path(__file__).parent/'.runtime'/'ui'):
@@ -79,6 +81,20 @@ class GlassBar(QWidget):
         elif self.isVisible():self.hide()
     def showEvent(self,event):
         super().showEvent(event);self.native=configure_window(int(self.winId()))
+        # Qt can update native styles after showEvent returns.
+        QTimer.singleShot(0,self.apply_native_settings)
+
+    def apply_native_settings(self):
+        if self.isVisible():self.native=configure_window(int(self.winId()))
+
+    def nativeEvent(self,event_type,message):
+        if sys.platform=='win32':
+            native=C.cast(int(message),C.POINTER(W.MSG)).contents
+            if native.message==0x0084: # WM_NCHITTEST: never claim the client area.
+                return True,-1 # HTTRANSPARENT
+            if native.message==0x0021: # WM_MOUSEACTIVATE
+                return True,3 # MA_NOACTIVATE
+        return super().nativeEvent(event_type,message)
 
     def read_report(self):
         try:self.report=json.loads((state_directory()/'usage.json').read_text(encoding='utf-8'))
@@ -116,7 +132,7 @@ class GlassBar(QWidget):
         paint=QPainter(self);paint.setRenderHints(QPainter.Antialiasing|QPainter.TextAntialiasing)
         rect=QRectF(self.rect()).adjusted(.5,.5,-.5,-.5)
         # Background transparency does not reduce text opacity.
-        gradient=QLinearGradient(0,0,0,HEIGHT);alpha=105 if self.native.get('acrylic') else 225
+        gradient=QLinearGradient(0,0,0,HEIGHT);alpha=24 if self.native.get('acrylic') else 120
         gradient.setColorAt(0,QColor(32,41,56,alpha));gradient.setColorAt(1,QColor(16,22,33,alpha+20))
         paint.setBrush(gradient);paint.setPen(QPen(QColor(230,240,255,48),1));paint.drawRoundedRect(rect,12,12)
         paint.setPen(Qt.NoPen);paint.setBrush(QColor(self.view['color']));paint.drawEllipse(QRectF(10,16,5,5))
@@ -131,8 +147,10 @@ class GlassBar(QWidget):
         paint.setPen(QPen(QColor(207,221,243,40),1));paint.drawLine(183,11,183,27)
 
     def diagnostics(self):
-        self.native=configure_window(int(self.winId()))
-        return {**self.native,'logical_size':[self.width(),self.height()],
+        styles=window_styles(int(self.winId()))
+        required=LAYERED|TRANSPARENT|NOACTIVATE
+        return {**self.native,'styles':styles,'click_through':styles&required==required,
+                'logical_size':[self.width(),self.height()],
                 'device_pixel_ratio':self.devicePixelRatioF(),'dpi':window_dpi(int(self.winId())),
                 'input_transparent_flag':bool(self.windowFlags()&Qt.WindowTransparentForInput),
                 'takes_focus':not bool(self.windowFlags()&Qt.WindowDoesNotAcceptFocus)}

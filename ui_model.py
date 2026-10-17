@@ -45,6 +45,8 @@ def display_state(report,now,lifecycle=None):
     startup=lifecycle_problem(lifecycle)
     if startup:
         color,status='#fbbf24',startup
+    elif report.get('waiting_for_context'):
+        color,status='#fbbf24','等待可用本机任务 · 无需管理对话'
     elif stale:color,status='#fbbf24','连接中 / 数据过期，暂停续跑'
     elif uncertain:color,status='#fbbf24','发送结果待检查'
     elif not report.get('enabled'):color,status='#94a3b8','自动续跑已暂停'

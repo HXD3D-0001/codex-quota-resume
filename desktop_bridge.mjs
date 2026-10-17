@@ -1,5 +1,5 @@
 // Version-sensitive adapter to the local Codex Desktop app-tools pipe.
-// Only the five allowlisted tools are reachable. No network listener or credentials.
+// Only the four allowlisted tools are reachable. No network listener or credentials.
 import net from 'node:net';
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -53,7 +53,7 @@ async function connect() {
   if (process.env.CODEX_APP_TOOLS_PIPE_PATH) candidates.add(process.env.CODEX_APP_TOOLS_PIPE_PATH);
   if (process.platform === 'win32') {
     for (const name of fs.readdirSync('\\\\.\\pipe\\')) {
-      if (/^codex-browser-use-[a-f0-9-]+$/.test(name)) candidates.add('\\\\.\\pipe\\' + name);
+      if (/^codex-(?:app-tools|browser-use)-[a-f0-9-]+$/.test(name)) candidates.add('\\\\.\\pipe\\' + name);
     }
   }
   for (const pipe of candidates) {
@@ -101,6 +101,7 @@ for await (const line of lines) {
     if (!allowed.has(input.tool) || typeof input.owner !== 'string' || !input.owner) throw new Error('Invalid bridge request');
     await connect();
     const result = await request(selected, 'tools/call', {
+      callerSource: 'codex',
       namespace: catalog.get(input.tool).namespace, tool: input.tool, arguments: input.args || {},
       threadId: input.owner, turnId: `quota-monitor-${randomUUID()}`, callId: `quota-monitor-${randomUUID()}`
     }, input.tool === 'send_message_to_thread' ? 30000 : 20000);
