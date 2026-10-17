@@ -50,6 +50,15 @@ class ContextIndexTests(IndexFixture, unittest.TestCase):
         self.index(5, [('deleted', 'vscode', 0, 1)])
         (self.root / 'state_10.sqlite').write_bytes(b'not sqlite')
         self.assertEqual(self.contexts(), [])
+    def test_titles_are_read_only_and_limited_to_requested_tasks(self):
+        path=self.index(rows=[('a','vscode',0,1),('b','vscode',0,2)])
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute('ALTER TABLE threads ADD COLUMN title TEXT')
+            db.execute('UPDATE threads SET title=id || ? ',(' title',))
+        self.assertTrue(callable(getattr(bridge,'local_task_titles',None)), 'Task picker needs unambiguous local task titles')
+        before=path.read_bytes()
+        self.assertEqual(bridge.local_task_titles(['b'],self.root),{'b':'b title'})
+        self.assertEqual(path.read_bytes(),before)
 
 
 class AutomaticContextTests(IndexFixture, unittest.TestCase):

@@ -18,18 +18,35 @@ class DesktopCallError(RuntimeError):
     """The desktop returned an explicit failure, rather than losing transport."""
 
 
+def _local_index_path(directory):
+    root = Path(directory) if directory is not None else Path(os.environ.get('CODEX_HOME', Path.home()/'.codex'))
+    indexes = [(int(p.stem.split('_')[1]), p) for p in root.glob('state_*.sqlite')
+               if p.stem.split('_')[1].isdigit()]
+    return max(indexes,key=lambda item:item[0])[1] if indexes else None
+
+
+def local_task_titles(thread_ids,directory=None):
+    """Fetch only picker labels for explicitly requested task IDs, never bodies."""
+    ids=list(dict.fromkeys(thread_ids))
+    if not ids:return {}
+    try:
+        path=_local_index_path(directory)
+        if path is None:return {}
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)) as db:
+            db.execute('PRAGMA query_only=ON')
+            return dict(db.execute('SELECT id,title FROM threads WHERE id IN ('+','.join('?' for _ in ids)+')',ids))
+    except (OSError,sqlite3.Error,ValueError):return {}
+
+
 def local_context_ids(directory=None):
     """Read IDs only from the newest local task index; never create a database.
 
     The index chooses a call context, not which task to resume. Eligibility and
     dispatch targets still come exclusively from fresh desktop tool responses.
     """
-    root = Path(directory) if directory is not None else Path(os.environ.get('CODEX_HOME', Path.home()/'.codex'))
     try:
-        indexes = [(int(p.stem.split('_')[1]), p) for p in root.glob('state_*.sqlite')
-                   if p.stem.split('_')[1].isdigit()]
-        if not indexes: return []
-        path = max(indexes, key=lambda item: item[0])[1]
+        path = _local_index_path(directory)
+        if path is None: return []
         # Do not fall back to an older index: it may still contain deleted IDs.
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True, timeout=1)) as db:
             db.execute('PRAGMA query_only=ON')

@@ -34,6 +34,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS attempts (
                 key TEXT PRIMARY KEY, thread_id TEXT NOT NULL, status TEXT NOT NULL,
                 created_at REAL NOT NULL, updated_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS drafts (
+                key TEXT PRIMARY KEY, text TEXT NOT NULL, updated_at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS editing_leases (
+                thread_id TEXT PRIMARY KEY, key TEXT NOT NULL, token TEXT NOT NULL, expires REAL NOT NULL);
         ''')
         with self.db:
             self.db.execute('INSERT OR IGNORE INTO settings VALUES (?,?)',('activated_at',str(time.time() if now is None else now)))
@@ -55,12 +59,50 @@ class Store:
         row=self.db.execute('SELECT turn_id FROM marks WHERE thread_id=?',(thread,)).fetchone()
         return row[0] if row else None
     def claimed(self,key):return self.db.execute('SELECT 1 FROM attempts WHERE key=?',(key,)).fetchone() is not None
+    @staticmethod
+    def draft_thread(key):
+        thread,separator,turn=key.partition(':')
+        if not separator or not thread or not turn:raise ValueError('需要有效的任务与中断轮次')
+        return thread
+    def draft(self,key):
+        row=self.db.execute('SELECT text FROM drafts WHERE key=?',(key,)).fetchone()
+        return row[0] if row else ''
+    def draft_rows(self):
+        # This metadata is safe for status displays; prompt text stays local.
+        return [dict(row) for row in self.db.execute('SELECT key,updated_at FROM drafts ORDER BY updated_at DESC')]
+    def save_draft(self,key,text,now):
+        self.draft_thread(key)
+        if not isinstance(text,str) or len(text)>20000:raise ValueError('补充提示词最多 20000 个字符')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if self.claimed(key):raise ValueError('此轮已开始发送或结果待确认，补充内容尚未发送，请保留并检查原聊天')
+            if text.strip():
+                self.db.execute('INSERT OR REPLACE INTO drafts VALUES (?,?,?)',(key,text,now))
+            else:self.db.execute('DELETE FROM drafts WHERE key=?',(key,))
+    def begin_edit(self,key,token,now):
+        thread=self.draft_thread(key)
+        if not token:raise ValueError('缺少编辑标识')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            if self.claimed(key):raise ValueError('此轮已开始发送或结果待确认，不能继续编辑')
+            lease=self.db.execute('SELECT token,expires FROM editing_leases WHERE thread_id=?',(thread,)).fetchone()
+            if lease and lease['token']!=token and lease['expires']>now:
+                raise ValueError('此任务正在另一个窗口中编辑')
+            self.db.execute('INSERT OR REPLACE INTO editing_leases VALUES (?,?,?,?)',(thread,key,token,now+30))
+    def end_edit(self,key,token):
+        with self.db:self.db.execute('DELETE FROM editing_leases WHERE thread_id=? AND key=? AND token=?',
+                                    (self.draft_thread(key),key,token))
     def claim(self,key,thread,now):
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self.db.execute('DELETE FROM editing_leases WHERE expires<=?',(now,))
+            if self.db.execute('SELECT 1 FROM editing_leases WHERE thread_id=?',(thread,)).fetchone():return False
             cursor=self.db.execute('INSERT OR IGNORE INTO attempts VALUES (?,?,?,?,?)',(key,thread,'dispatching',now,now))
             return cursor.rowcount==1
     def finish(self,key,status,now):
-        with self.db:self.db.execute('UPDATE attempts SET status=?,updated_at=? WHERE key=?',(status,now,key))
+        with self.db:
+            self.db.execute('UPDATE attempts SET status=?,updated_at=? WHERE key=?',(status,now,key))
+            if status=='sent':self.db.execute('DELETE FROM drafts WHERE key=?',(key,))
     def attempts(self):
         return [dict(row) for row in self.db.execute('SELECT * FROM attempts ORDER BY created_at DESC LIMIT 50')]
     def report(self,value):
@@ -136,7 +178,13 @@ class Monitor:
                         or not self.store.enabled() or not quota_ready(fresh,self.clock())):continue
                 if not self.store.claim(key,thread,self.clock()):continue
                 try:
-                    response=self.desktop.call('send_message_to_thread',threadId=thread,hostId='local',prompt=CONTINUE_PROMPT)
+                    # claim and editing leases serialize with draft saves. Once
+                    # claimed, the snapshot cannot be edited during dispatch.
+                    supplement=self.store.draft(key)
+                    prompt=CONTINUE_PROMPT
+                    if supplement:
+                        prompt+='\n\n用户为本次恢复在本机暂存的补充要求（以这些要求为准）：\n'+supplement
+                    response=self.desktop.call('send_message_to_thread',threadId=thread,hostId='local',prompt=prompt)
                     # Any returned failure stays uncertain; never turn an ambiguous response into a resend.
                     if response.get('error') or response.get('status') in ('failed','error','rejected'):
                         raise RuntimeError('Desktop did not confirm dispatch')

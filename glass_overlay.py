@@ -32,12 +32,15 @@ class GlassBar(QWidget):
         self.setFixedSize(WIDTH,HEIGHT)
         self.expanded=True;self.pinned=False;self.grace=time.monotonic()+5
         self.report={};self.lifecycle=None;self.view=display_state({},time.time());self.last_read=0
-        self.native={};self.tray=None
+        self.native={};self.tray=None;self.draft_editor=None
         if live:self.build_tray()
         self.timer=QTimer(self);self.timer.timeout.connect(self.tick)
         if live:self.timer.start(100)
 
     def quit_requested(self):
+        if self.draft_editor is not None:
+            self.draft_editor.close()
+            if self.draft_editor is not None and self.draft_editor.isVisible():return
         # One file serves both readers: monitor.run_worker stops shortly after
         # seeing it, and the listener treats it as "the user asked for this"
         # instead of restarting the overlay as if it had crashed.
@@ -55,6 +58,7 @@ class GlassBar(QWidget):
         menu.addSeparator()
         from control import execute
         menu.addAction('立即刷新',lambda:execute('refresh'))
+        menu.addAction('补充恢复提示词…',self.open_draft_editor)
         self.enabled_action=menu.addAction('自动续跑');self.enabled_action.setCheckable(True)
         self.enabled_action.triggered.connect(lambda enabled:execute('enable' if enabled else 'pause'))
         self.pin_action=menu.addAction('常驻显示');self.pin_action.setCheckable(True)
@@ -64,6 +68,21 @@ class GlassBar(QWidget):
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda reason:self.reveal() if reason==QSystemTrayIcon.Trigger else None)
         self.tray.show()
+
+    def open_draft_editor(self):
+        if self.draft_editor is None:
+            from draft_editor import DraftEditor
+            self.draft_editor=DraftEditor()
+            self.draft_editor.finished.connect(self.draft_editor_closed)
+        self.draft_editor.show()
+        self.draft_editor.raise_()
+        self.draft_editor.activateWindow()
+        self.draft_editor.editor.setFocus()
+
+    def draft_editor_closed(self,result):
+        editor=self.draft_editor
+        self.draft_editor=None
+        if editor is not None:editor.deleteLater()
 
     def refresh_menu(self):
         self.menu_status.setText(self.view['status'])
