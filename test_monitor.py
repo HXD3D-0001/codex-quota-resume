@@ -55,6 +55,26 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(self.desktop.sent),1)
         self.assertEqual(self.desktop.sent[0]['threadId'],'thread-a')
 
+    def test_switching_from_pro_weekly_only_back_to_plus_checks_both_windows(self):
+        self.desktop.usage=weekly_usage(40,True)
+        report=self.monitor.tick()
+        self.assertTrue(report['usage']['weekly_only'])
+        self.assertEqual(len(self.desktop.sent),1)
+        self.desktop.detail=task(turn='plus-turn')
+        for short,weekly in [(100,20),(0,100)]:
+            self.desktop.usage=usage(short,weekly)
+            self.desktop.usage['ordinaryUsageAllowed']=True
+            self.desktop.usage['rateLimitsByLimitId']['codex']['planType']='plus'
+            report=self.monitor.tick()
+            self.assertFalse(report['usage']['weekly_only'])
+            self.assertEqual(len(self.desktop.sent),1)
+        self.desktop.usage=usage(0,20)
+        self.desktop.usage['rateLimitsByLimitId']['codex']['planType']='plus'
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),2)
+        self.assertEqual({row['key'] for row in self.store.attempts()},
+                         {'thread-a:turn-a','thread-a:plus-turn'})
+
     def test_reset_credit_recovery_is_polled_before_original_reset_time(self):
         # A credit is redeemed independently of the previously advertised timer.
         clock=[120.0];queried=[]
