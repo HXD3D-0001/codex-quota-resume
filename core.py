@@ -23,16 +23,19 @@ def normalize_usage(raw, now):
         if used is None or minutes is None or reset is None or not 0 <= used <= 100 or minutes <= 0 or reset <= 0:
             continue
         windows.append({'used': used, 'minutes': minutes, 'reset': reset})
-    return {'observed_at': now, 'windows': windows,
-            'denied': raw.get('ordinaryUsageAllowed') is False or bool(bucket.get('spendControlReached'))
+    weekly_only = (len(windows) == 1 and windows[0]['minutes'] == 10080
+                   and 'secondary' in bucket and bucket['secondary'] is None)
+    return {'observed_at': now, 'windows': windows, 'weekly_only': weekly_only,
+            'denied': raw.get('ordinaryUsageAllowed') is not True or bool(bucket.get('spendControlReached'))
                       or bool(bucket.get('rateLimitReachedType'))}
 
 
 def quota_ready(data, now):
     windows = data.get('windows', [])
-    # A partial response is displayable but never enough to authorize a turn.
+    # A weekly-only response is valid, but partial/malformed slots are unknown.
     return (0 <= now - data.get('observed_at', 0) <= 60
-            and len(windows) == 2 and not data.get('denied', True)
+            and (len(windows) == 2 or (len(windows) == 1 and data.get('weekly_only',False)))
+            and not data.get('denied', True)
             and all(w['used'] < 100 for w in windows))
 
 

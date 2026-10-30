@@ -13,6 +13,14 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(view['groups'][0]['countdown'],'更新中')
     def test_missing_window_is_not_zero(self):
         self.assertEqual(display_state({},0)['groups'][0]['balance'],'—')
+    def test_weekly_only_does_not_show_missing_five_hour_window_as_connecting(self):
+        from core import normalize_usage
+        from test_core import weekly_usage
+        report={'connected':True,'enabled':True,'usage':normalize_usage(weekly_usage(),100)}
+        groups=display_state(report,100)['groups']
+        self.assertEqual(groups[0]['balance'],'—')
+        self.assertEqual(groups[0]['countdown'],'未提供')
+        self.assertEqual(groups[1]['balance'],'50%')
     def test_no_context_displays_waiting_without_claiming_fresh_quota(self):
         view=display_state({'waiting_for_context':True,'connected':False},100)
         self.assertTrue(view['stale'])

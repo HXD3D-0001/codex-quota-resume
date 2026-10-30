@@ -9,6 +9,12 @@ def usage(short=100, weekly=20, reset=200):
                 'secondary': {'usedPercent': weekly, 'windowDurationMins': 10080, 'resetsAt': 900}}}}
 
 
+def weekly_usage(used=50,allowed=True):
+    return {'ordinaryUsageAllowed':allowed,'rateLimitsByLimitId':{'codex':{
+        'primary':{'usedPercent':used,'windowDurationMins':10080,'resetsAt':900},
+        'secondary':None,'planType':'prolite'}}}
+
+
 def task(status='failed', error="You've hit your usage limit.", turn='turn-a', ended=110):
     return {'thread': {'id': 'thread-a', 'status': {'type': 'idle'}},
             'turns': [{'id': turn, 'status': status, 'error': {'message': error}, 'completedAt': ended}]}
@@ -35,6 +41,33 @@ class QuotaTests(unittest.TestCase):
     def test_secondary_missing_is_unknown(self):
         raw=usage(0); raw['rateLimitsByLimitId']['codex']['secondary']=None
         self.assertFalse(quota_ready(normalize_usage(raw, 100), 100))
+
+    def test_weekly_only_response_can_resume_with_backend_permission(self):
+        self.assertTrue(quota_ready(normalize_usage(weekly_usage(),100),100))
+
+    def test_backend_permission_must_be_explicit_for_any_window_shape(self):
+        for raw in [usage(0),weekly_usage()]:
+            for value in (None,False,1):
+                raw['ordinaryUsageAllowed']=value
+                self.assertFalse(quota_ready(normalize_usage(raw,100),100))
+            del raw['ordinaryUsageAllowed']
+            self.assertFalse(quota_ready(normalize_usage(raw,100),100))
+
+    def test_weekly_only_missing_or_malformed_slot_is_not_complete(self):
+        for secondary in ({},{'usedPercent':0}):
+            raw=weekly_usage();raw['rateLimitsByLimitId']['codex']['secondary']=secondary
+            self.assertFalse(quota_ready(normalize_usage(raw,100),100))
+        raw=weekly_usage();del raw['rateLimitsByLimitId']['codex']['secondary']
+        self.assertFalse(quota_ready(normalize_usage(raw,100),100))
+
+    def test_weekly_only_still_checks_exhaustion_freshness_and_denial(self):
+        self.assertFalse(quota_ready(normalize_usage(weekly_usage(100),100),100))
+        self.assertFalse(quota_ready(normalize_usage(weekly_usage(50,False),100),100))
+        data=normalize_usage(weekly_usage(),100)
+        self.assertFalse(quota_ready(data,161))
+        self.assertFalse(quota_ready(data,99))
+        raw=weekly_usage();raw['rateLimitsByLimitId']['codex']['spendControlReached']=True
+        self.assertFalse(quota_ready(normalize_usage(raw,100),100))
 
     def test_server_denial_wins_over_percent(self):
         raw=usage(0); raw['ordinaryUsageAllowed']=False

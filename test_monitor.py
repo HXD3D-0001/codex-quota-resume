@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from test_core import usage, task
+from test_core import usage, task, weekly_usage
 from monitor import Store, Monitor
 
 
@@ -46,6 +46,14 @@ class MonitorTests(unittest.TestCase):
         self.store.close();self.store=Store(self.path,now=130)
         Monitor(self.store,self.desktop,clock=lambda:130).tick()
         self.assertEqual(len(self.desktop.sent),1)
+
+    def test_weekly_only_recovery_after_plan_change_sends_once(self):
+        self.desktop.usage=weekly_usage(100,False)
+        self.monitor.tick();self.assertEqual(self.desktop.sent,[])
+        self.desktop.usage=weekly_usage(40,True)
+        self.monitor.tick();self.monitor.tick()
+        self.assertEqual(len(self.desktop.sent),1)
+        self.assertEqual(self.desktop.sent[0]['threadId'],'thread-a')
 
     def test_reset_credit_recovery_is_polled_before_original_reset_time(self):
         # A credit is redeemed independently of the previously advertised timer.

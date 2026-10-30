@@ -40,7 +40,8 @@ def display_state(report,now,lifecycle=None):
     for minutes,label in [(300,'5h'),(10080,'7d')]:
         window=next((w for w in windows if w.get('minutes')==minutes),None)
         groups.append({'label':label,'balance':f"{round(100-window['used'])}%" if window else '—',
-                       'countdown':countdown(window['reset'],now) if window else '连接中'})
+                       'countdown':countdown(window['reset'],now) if window else
+                                   ('未提供' if minutes==300 and usage.get('weekly_only') else '连接中')})
     uncertain=any(a.get('status') in ('uncertain','dispatching') for a in report.get('attempts',[]))
     startup=lifecycle_problem(lifecycle)
     if startup:
